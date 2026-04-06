@@ -43,15 +43,32 @@
   .room-input-area input {
     background: rgba(255,255,255,0.12); border: 1.5px solid rgba(255,255,255,0.3);
     color: #fff; padding: 4px 10px; font-size: 13px;
-    font-family: 'Space Mono', monospace; border-radius: 4px; width: 150px; outline: none;
+    font-family: 'Space Mono', monospace; border-radius: 4px; width: 140px; outline: none;
   }
   .room-input-area input::placeholder { color: rgba(255,255,255,0.4); }
+  .name-input {
+    background: rgba(255,255,255,0.12); border: 1.5px solid rgba(255,255,255,0.3);
+    color: #fff; padding: 4px 10px; font-size: 13px;
+    font-family: 'Zen Kaku Gothic New', sans-serif; border-radius: 4px; width: 110px; outline: none;
+  }
+  .name-input::placeholder { color: rgba(255,255,255,0.4); }
   .room-join-btn {
     background: var(--accent); color: #fff; border: none;
     padding: 5px 14px; font-size: 12px; font-family: 'Zen Kaku Gothic New', sans-serif;
     font-weight: 700; cursor: pointer; border-radius: 4px; transition: opacity 0.2s;
   }
   .room-join-btn:hover { opacity: 0.85; }
+
+  /* オンラインユーザー */
+  .online-users { display: flex; align-items: center; gap: 4px; }
+  .user-dot {
+    width: 22px; height: 22px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px; font-weight: 700; color: #fff;
+    border: 2px solid rgba(255,255,255,0.5);
+    title: attr(data-name);
+  }
+
   .toolbar {
     background: var(--white); border-bottom: 3px solid var(--border);
     display: flex; align-items: center; gap: 6px;
@@ -83,15 +100,35 @@
   }
   .size-label { font-size: 11px; color: #888; white-space: nowrap; }
   input[type="range"] { width: 70px; accent-color: var(--accent); }
+
   #textInput {
     position: absolute; border: 2px dashed var(--accent);
     background: rgba(255,255,255,0.9); padding: 4px 8px; font-size: 16px;
     outline: none; min-width: 120px; border-radius: 4px; display: none; z-index: 100;
   }
+
   .canvas-wrap { flex: 1; position: relative; overflow: hidden; }
-  canvas { display: block; cursor: crosshair; touch-action: none; }
-  canvas.eraser-mode { cursor: cell; }
-  canvas.text-mode { cursor: text; }
+
+  /* メインキャンバス（確定済みストローク） */
+  #canvas { position: absolute; top: 0; left: 0; cursor: crosshair; touch-action: none; }
+  /* ライブキャンバス（描き中のストローク＋カーソル） */
+  #liveCanvas { position: absolute; top: 0; left: 0; pointer-events: none; touch-action: none; }
+
+  #canvas.eraser-mode { cursor: cell; }
+  #canvas.text-mode { cursor: text; }
+
+  /* 他ユーザーのカーソルラベル */
+  .cursor-label {
+    position: absolute;
+    font-size: 11px; font-weight: 700;
+    padding: 2px 7px; border-radius: 10px;
+    color: #fff; pointer-events: none;
+    white-space: nowrap;
+    transform: translate(12px, -4px);
+    transition: left 0.05s, top 0.05s;
+    z-index: 50;
+  }
+
   .clear-confirm {
     position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
     background: var(--white); border: 3px solid var(--border);
@@ -122,8 +159,10 @@
   <span class="logo">WHITEBOARD</span>
   <span class="room-badge" id="roomBadge">未接続</span>
   <span class="status-dot" id="statusDot"></span>
+  <div class="online-users" id="onlineUsers"></div>
   <span class="spacer"></span>
   <div class="room-input-area">
+    <input type="text" class="name-input" id="nameInput" placeholder="あなたの名前" value="">
     <input type="text" id="roomInput" placeholder="ルームID" value="main-room">
     <button class="room-join-btn" onclick="joinRoom()">入室</button>
   </div>
@@ -141,6 +180,7 @@
     <div class="color-swatch" style="background:#f5a623" onclick="setColor('#f5a623',this)"></div>
     <div class="color-swatch" style="background:#2196f3" onclick="setColor('#2196f3',this)"></div>
     <div class="color-swatch" style="background:#4caf50" onclick="setColor('#4caf50',this)"></div>
+    <div class="color-swatch" style="background:#9c27b0" onclick="setColor('#9c27b0',this)"></div>
     <div class="color-swatch" style="background:#fff;border:2px solid #333" onclick="setColor('#ffffff',this)"></div>
     <input type="color" value="#1a1a2e" onchange="setColor(this.value,null)" title="カスタム色">
   </div>
@@ -150,13 +190,14 @@
     <span id="sizeVal" style="font-size:12px;min-width:24px">4</span>
   </div>
   <div class="tool-group">
-    <button class="tool-btn" onclick="undoLast()" title="元に戻す（自分の最後）">↩</button>
+    <button class="tool-btn" onclick="undoLast()" title="元に戻す">↩</button>
     <button class="tool-btn" onclick="showClearConfirm()" title="全消去" style="color:var(--accent)">🗑</button>
   </div>
 </div>
 
 <div class="canvas-wrap" id="canvasWrap">
   <canvas id="canvas"></canvas>
+  <canvas id="liveCanvas"></canvas>
   <input type="text" id="textInput" placeholder="テキストを入力... (Enterで確定)">
 </div>
 
@@ -167,7 +208,6 @@
     <button class="btn-cancel" onclick="hideClearConfirm()">キャンセル</button>
   </div>
 </div>
-
 <div class="toast" id="toast"></div>
 
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
@@ -185,22 +225,35 @@ firebase.initializeApp({
 });
 const db = firebase.database();
 
+// ── ユーザー情報 ──
+const COLORS = ['#e84545','#2196f3','#4caf50','#f5a623','#9c27b0','#00bcd4','#ff5722','#607d8b'];
+let myId = 'u_' + Math.random().toString(36).slice(2, 8);
+let myName = '';
+let myColor = COLORS[Math.floor(Math.random() * COLORS.length)];
+
 // ── 状態 ──
-let strokesRef = null, currentListener = null;
+let strokesRef = null, liveRef = null, presenceRef = null, myPresenceRef = null;
+let listeners = [];
 let tool = 'pen', currentColor = '#1a1a2e', currentSize = 4;
 let isDrawing = false, currentStroke = null, strokeId = null;
-let myId = 'u_' + Math.random().toString(36).slice(2, 8);
-let localStrokes = {}, moveCount = 0;
+let localStrokes = {};     // 確定済みストローク
+let liveStrokes = {};      // 描き中（他ユーザー含む）
+let otherPresence = {};    // 他ユーザーのプレゼンス
+let cursorLabels = {};     // DOM要素キャッシュ
 
 // ── キャンバス ──
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
+const liveCanvas = document.getElementById('liveCanvas');
+const liveCtx = liveCanvas.getContext('2d');
 const wrap = document.getElementById('canvasWrap');
 
 function resizeCanvas() {
-  canvas.width = wrap.clientWidth;
-  canvas.height = wrap.clientHeight;
+  const w = wrap.clientWidth, h = wrap.clientHeight;
+  canvas.width = liveCanvas.width = w;
+  canvas.height = liveCanvas.height = h;
   redrawAll();
+  redrawLive();
 }
 window.addEventListener('resize', resizeCanvas);
 resizeCanvas();
@@ -208,59 +261,148 @@ resizeCanvas();
 // ── ルーム入室 ──
 function joinRoom() {
   const roomId = document.getElementById('roomInput').value.trim();
+  myName = document.getElementById('nameInput').value.trim() || ('ユーザー' + myId.slice(-3));
   if (!roomId) { showToast('ルームIDを入力してください'); return; }
-  if (strokesRef && currentListener) strokesRef.off('value', currentListener);
 
-  strokesRef = db.ref('rooms/' + roomId + '/strokes');
-  localStrokes = {};
-  redrawAll();
+  // 旧リスナーを全解除
+  listeners.forEach(({ ref, ev, fn }) => ref.off(ev, fn));
+  listeners = [];
+  if (myPresenceRef) { myPresenceRef.remove(); myPresenceRef = null; }
+  Object.values(cursorLabels).forEach(el => el.remove());
+  cursorLabels = {};
 
-  currentListener = strokesRef.on('value', snap => {
-    localStrokes = snap.val() || {};
-    redrawAll();
-  });
+  strokesRef  = db.ref('rooms/' + roomId + '/strokes');
+  liveRef     = db.ref('rooms/' + roomId + '/live');
+  presenceRef = db.ref('rooms/' + roomId + '/presence');
+  myPresenceRef = presenceRef.child(myId);
+
+  // 退出時に自動削除
+  myPresenceRef.onDisconnect().remove();
+  myPresenceRef.set({ name: myName, color: myColor, ts: Date.now() });
+
+  // 確定済みストローク購読
+  const strokeFn = snap => { localStrokes = snap.val() || {}; redrawAll(); };
+  strokesRef.on('value', strokeFn);
+  listeners.push({ ref: strokesRef, ev: 'value', fn: strokeFn });
+
+  // ライブストローク購読（描き中）
+  const liveFn = snap => { liveStrokes = snap.val() || {}; redrawLive(); };
+  liveRef.on('value', liveFn);
+  listeners.push({ ref: liveRef, ev: 'value', fn: liveFn });
+
+  // プレゼンス購読（オンラインユーザー）
+  const presFn = snap => { otherPresence = snap.val() || {}; updatePresenceUI(); };
+  presenceRef.on('value', presFn);
+  listeners.push({ ref: presenceRef, ev: 'value', fn: presFn });
 
   document.getElementById('roomBadge').textContent = roomId;
   document.getElementById('statusDot').classList.add('connected');
   showToast('✅ ルーム「' + roomId + '」に接続しました！');
 }
 
-// ── 描画 ──
+// ── プレゼンスUI ──
+function updatePresenceUI() {
+  const container = document.getElementById('onlineUsers');
+  container.innerHTML = '';
+  Object.entries(otherPresence).forEach(([id, p]) => {
+    const dot = document.createElement('div');
+    dot.className = 'user-dot';
+    dot.style.background = p.color || '#888';
+    dot.title = p.name || id;
+    dot.textContent = (p.name || '?')[0].toUpperCase();
+    container.appendChild(dot);
+  });
+
+  // 他ユーザーのカーソルラベル（自分以外）
+  const existing = new Set(Object.keys(cursorLabels));
+  Object.entries(otherPresence).forEach(([id, p]) => {
+    if (id === myId) return;
+    existing.delete(id);
+    if (!cursorLabels[id]) {
+      const el = document.createElement('div');
+      el.className = 'cursor-label';
+      el.style.background = p.color || '#888';
+      el.textContent = p.name || id;
+      wrap.appendChild(el);
+      cursorLabels[id] = el;
+    }
+  });
+  // 退出したユーザーのラベル削除
+  existing.forEach(id => {
+    if (cursorLabels[id]) { cursorLabels[id].remove(); delete cursorLabels[id]; }
+  });
+}
+
+// ── 描画：確定済み ──
 function redrawAll() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   Object.values(localStrokes)
     .sort((a, b) => (a.ts || 0) - (b.ts || 0))
-    .forEach(renderStroke);
+    .forEach(s => renderStroke(ctx, s));
 }
 
-function renderStroke(s) {
+// ── 描画：ライブ（描き中＋カーソル） ──
+function redrawLive() {
+  liveCtx.clearRect(0, 0, liveCanvas.width, liveCanvas.height);
+
+  Object.entries(liveStrokes).forEach(([uid, s]) => {
+    if (!s) return;
+
+    // カーソル位置更新
+    if (uid !== myId && cursorLabels[uid] && s.cx !== undefined) {
+      cursorLabels[uid].style.left = s.cx + 'px';
+      cursorLabels[uid].style.top  = s.cy + 'px';
+    }
+
+    // 描き中ストローク描画（自分以外）
+    if (uid !== myId && s.points && s.points.length > 1) {
+      renderStroke(liveCtx, s);
+    }
+  });
+
+  // カーソルドット（他ユーザー）
+  Object.entries(liveStrokes).forEach(([uid, s]) => {
+    if (uid === myId || !s || s.cx === undefined) return;
+    const color = (otherPresence[uid] && otherPresence[uid].color) || '#888';
+    liveCtx.beginPath();
+    liveCtx.arc(s.cx, s.cy, 5, 0, Math.PI * 2);
+    liveCtx.fillStyle = color;
+    liveCtx.fill();
+    liveCtx.strokeStyle = '#fff';
+    liveCtx.lineWidth = 1.5;
+    liveCtx.stroke();
+  });
+}
+
+function renderStroke(c, s) {
   if (s.tool === 'text') {
-    ctx.font = `${s.size * 4 + 12}px 'Zen Kaku Gothic New', sans-serif`;
-    ctx.fillStyle = s.color;
-    ctx.globalCompositeOperation = 'source-over';
-    ctx.fillText(s.text || '', s.x, s.y);
+    c.font = `${(s.size||4) * 4 + 12}px 'Zen Kaku Gothic New', sans-serif`;
+    c.fillStyle = s.color || '#000';
+    c.globalCompositeOperation = 'source-over';
+    c.fillText(s.text || '', s.x, s.y);
     return;
   }
   if (!s.points || s.points.length < 1) return;
-  ctx.beginPath();
-  ctx.strokeStyle = s.color;
-  ctx.lineWidth = s.size;
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-  ctx.globalCompositeOperation = s.tool === 'eraser' ? 'destination-out' : 'source-over';
-  ctx.moveTo(s.points[0][0], s.points[0][1]);
-  for (let i = 1; i < s.points.length; i++) ctx.lineTo(s.points[i][0], s.points[i][1]);
-  ctx.stroke();
-  ctx.globalCompositeOperation = 'source-over';
+  c.beginPath();
+  c.strokeStyle = s.color || '#000';
+  c.lineWidth = s.size || 4;
+  c.lineCap = 'round';
+  c.lineJoin = 'round';
+  c.globalCompositeOperation = s.tool === 'eraser' ? 'destination-out' : 'source-over';
+  c.moveTo(s.points[0][0], s.points[0][1]);
+  for (let i = 1; i < s.points.length; i++) c.lineTo(s.points[i][0], s.points[i][1]);
+  c.stroke();
+  c.globalCompositeOperation = 'source-over';
 }
 
-// ── イベント ──
+// ── ポインター取得 ──
 function getPos(e) {
   const r = canvas.getBoundingClientRect();
   const src = e.touches ? e.touches[0] : e;
   return { x: src.clientX - r.left, y: src.clientY - r.top };
 }
 
+// ── 描画イベント ──
 function onDown(e) {
   e.preventDefault();
   if (!strokesRef) { showToast('先に「入室」してください'); return; }
@@ -268,23 +410,38 @@ function onDown(e) {
   const p = getPos(e);
   isDrawing = true;
   strokeId = myId + '_' + Date.now();
-  currentStroke = { tool, color: currentColor, size: currentSize, points: [[p.x, p.y]], ts: Date.now() };
+  currentStroke = { tool, color: currentColor, size: currentSize, points: [[p.x, p.y]], ts: Date.now(), cx: p.x, cy: p.y };
+  liveRef && liveRef.child(myId).set(currentStroke);
 }
 
 function onMove(e) {
   e.preventDefault();
-  if (!isDrawing) return;
   const p = getPos(e);
-  currentStroke.points.push([p.x, p.y]);
-  localStrokes[strokeId] = currentStroke;
-  redrawAll();
-  if (++moveCount % 6 === 0) strokesRef.child(strokeId).set(currentStroke);
+
+  if (isDrawing && currentStroke) {
+    currentStroke.points.push([p.x, p.y]);
+    currentStroke.cx = p.x;
+    currentStroke.cy = p.y;
+    // ライブに毎回送信（描き中が他ユーザーに見える）
+    liveRef && liveRef.child(myId).set(currentStroke);
+    // ローカルプレビュー
+    localStrokes[strokeId] = currentStroke;
+    redrawAll();
+  } else {
+    // 非描画中もカーソル位置だけ共有
+    liveRef && liveRef.child(myId).update({ cx: p.x, cy: p.y, ts: Date.now() });
+  }
 }
 
 function onUp(e) {
   if (!isDrawing) return;
-  isDrawing = false; moveCount = 0;
-  if (strokesRef && currentStroke) strokesRef.child(strokeId).set(currentStroke);
+  isDrawing = false;
+  if (strokesRef && currentStroke) {
+    // 確定済みに移動
+    strokesRef.child(strokeId).set(currentStroke);
+    // ライブから削除（描き終わり）
+    liveRef && liveRef.child(myId).set({ cx: currentStroke.cx, cy: currentStroke.cy });
+  }
   currentStroke = null;
 }
 
